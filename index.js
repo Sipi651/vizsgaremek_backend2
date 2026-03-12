@@ -39,7 +39,7 @@ const app = express();
 app.use(express.json())
 app.use(cookieParser())
 app.use(cors({
-    origin: 'http://localhost:5173',
+    origin: 'http://localhost:5174',
     credentials: true
 }))
 
@@ -62,9 +62,11 @@ function auth(req, res, next) {
 
 //bementi adatok ellenőrzése
 app.post('/regisztracio', async (req, res) => {
-    const { email, teljes_nev, jelszo, szerepkor, telefonszam } = req.body;
+    const { email, teljes_nev, jelszo, telefonszam } = req.body;
 
-    if (!email || !teljes_nev || !jelszo || !telefonszam ||  !(szerepkor === 0 || szerepkor === 1)) {
+    console.log(req.body);
+    if (!email || !teljes_nev || !jelszo || !telefonszam) {  // ezt tedd visza majd  ---->   ||  !(szerepkor === 0 || szerepkor === 1)
+        console.log(!email, !teljes_nev, !jelszo, !telefonszam);
         return res.status(400).json({ message: "hiányzó bemeneti adatok :( " })
     }
 
@@ -72,7 +74,7 @@ app.post('/regisztracio', async (req, res) => {
         //elenőrizük hogy valós email cim e
         const isValid = await emailValidator(email)
         if (!isValid) {
-            return res.status(401).json({ message: "nem valós emailt adtál meg ne verj átt :(" })
+            return res.status(401).json({ message: "nem valós emailt adtál meg (ne verj átt) :(" })
         }
 
         //ellenőrízni emailt, hogy egyedi-e
@@ -85,7 +87,7 @@ app.post('/regisztracio', async (req, res) => {
         //regisztráció elvégzése
         const hash = await bcrypt.hash(jelszo, 10);
         const regisztracioSQL = 'INSERT INTO felhasznalok (email, teljes_nev, jelszo, szerepkor) VALUES (?,?,?,?)'
-        const [result] = await db.query(regisztracioSQL, [email, teljes_nev, hash, szerepkor])
+        const [result] = await db.query(regisztracioSQL, [email, teljes_nev, hash, 0])
 
         //válasz a felhasználónak
         return res.status(200).json({
@@ -101,7 +103,7 @@ app.post('/regisztracio', async (req, res) => {
 app.post('/belepes', async (req, res) => {
     const { email, jelszo } = req.body;
     if (!email || !jelszo) {
-        return res.status(400).json({ message: "Hiányos bementi adatok (hiányzik valami bártom)  :(" })
+        return res.status(400).json({ message: "Hiányos bementi adatok (hiányzik valami barátom)  :(" })
     }
     try {
         const sql1 = 'SELECT * FROM felhasznalok WHERE email = ?'
