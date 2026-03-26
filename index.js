@@ -212,6 +212,89 @@ app.delete('/fiokom', auth, async (req, res) => {
 
 })
 
+app.get('/felhasznalok', auth, isAdmin, async (req, res)=>{
+    try{
+        const sql='SELECT id, email, felhasznalonev, admin FROM felhasznalok';
+        const [rows]=await db.query(sql);
+        return res.status(200).json(rows)
+    }catch (error)
+    {
+        console.log(error);
+        res.status(500).json({message: "szerverhiba"})
+    }
+})
+
+app.post('/kepek', auth, upload.single('kep_neve'), async (req, res) => {
+    const image = req.file ? req.file.filename : null;
+    const user = req.user;
+    if (image == null) {
+        return res.status(400).json({ message: "Hiányzó bemeneti adatok" })
+    }
+    try {
+        const sql = 'INSERT INTO kepek (felhasznalo_id, zsuri_id, kep_neve) VALUES (?,?,?)';
+        await db.query(sql, [user.id, zsuri_id, image]);
+        return res.status(200).json({ message: 'Sikeres felvitel' })
+    } catch (error) {
+        console.log(error);
+        res.status(500).json({ message: "szerverhiba" })
+    }
+})
+
+app.delete('/kepek', auth, async (req, res) => {
+    const { kep_neve } = req.body;
+    const felhasznalo_id = req.user.id;
+    try {
+        const sql = 'DELETE FROM kepek WHERE kep_neve = ? AND felhasznalo_id = ?'
+        const [result] = await db.query(sql, [kep_neve, felhasznalo_id]);
+        if (!result.affectedRows) {
+            return res.status(404).json({ message: "nincs ilyen kép" })
+        }
+        const filePath = path.join(__dirname, 'uploads', kep_neve)
+        await fs.unlink(filePath); // kép törlése
+        res.status(200).json({ message: 'Sikeres törlés' })
+    } catch (error) {
+        console.log(error);
+        res.status(500).json({ message: "szerverhiba" })
+    }
+})
+
+app.put('/szerepkor/:felhasznalo_id', auth, isAdmin, async(req, res)=>{
+    const {felhasznalo_id} = req.params
+    const  {szerepkor}= req.body
+    if (szerepkor == undefined) {
+        return res.status(400).json({message: 'a szerepkork megadása kötelező'})
+    }
+    try {
+        const sql = 'UPDATE felhasznalok SET admin = ? WHERE id = ?';
+        await db.query(sql, [szerepkor, felhasznalo_id])
+        return res.status(200).json('Sikeres módositás')
+    } catch (error) {
+        res.status(500).json({message: "szerverhiba"})
+    }
+})
+
+app.delete('/felhasznalo/:id', auth, isAdmin, async(req, res)=>{
+    const {id} = req.params
+    try {
+        const sql = 'DELETE FROM felhasznalok WHERE id=?';
+        await db.query(sql, [id])
+        return res.status(200).json({message: 'Sikeres törlés'})
+    } catch (error) {
+        res.status(500).json({message: "szerverhiba"})
+    }
+})
+app.get('/felhasznalok', auth, isAdmin, async (req, res)=>{
+    try{
+        const sql='SELECT id, email, felhasznalonev, admin FROM felhasznalok where id <> ?';
+        const [rows]=await db.query(sql, [req.user.id]);
+        return res.status(200).json(rows)
+    }catch (error)
+    {
+        console.log(error);
+        res.status(500).json({message: "szerverhiba"})
+    }
+})
+
 // SZERVER INDITÁS
 app.listen(PORT, HOST, () => {
     console.log(`API fut: http://${HOST}:${PORT}/`);
