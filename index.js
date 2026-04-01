@@ -341,3 +341,5 @@ app.delete('/felhasznalo/:id', auth, isAdmin, async (req, res) => {
 app.listen(PORT, HOST, () => {
     console.log(`API fut: http://${HOST}:${PORT}/`);
 })
+
+// asdasdasd
