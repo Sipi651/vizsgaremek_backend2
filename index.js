@@ -8,6 +8,7 @@ const emailValidator = require('node-email-verifier');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs/promises');
+const { log } = require('console');
 
 // config
 const PORT = 3000;
@@ -21,8 +22,8 @@ const COOKIE_OPTS = {
     secure: false,
     sameSite: 'lax',
     path: '/',
-    maxAge: 7 * 24 * 60 * 60 * 1000
-};
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 nap
+}
 
 // adatbázis
 const db = mysql.createPool({
@@ -44,13 +45,26 @@ app.use(cors({
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // middleware
-function auth(req, res, next) {
-    console.log('AUTH LEFUTOTT');
-    console.log('COOKIEK:', req.cookies);
-    console.log('TOKEN:', req.cookies[COOKIE_NAME]);
-
-    return res.status(418).json({ message: 'AUTH TESZT' });
+async function auth(req, res, next) {
+    const token = req.cookies[COOKIE_NAME];
+    if (!token) { // le van járva a cookie --> nem érvényes
+        return res.status(409).json({ message: "Nincs bejelentkezés" })
+    }
+    try {
+        // tokenből kinyerni a felhasználói adatokat!
+        const user = jwt.verify(token, JWT_SECRET)
+        const sql = 'SELECT * FROM felhasznalok WHERE id = ?'
+        const [rows] = await db.query(sql, [user.id]);
+        if (rows.length) {
+            const user = rows[0];
+            req.user= { id: user.id, email: user.email, teljes_nev: user.teljes_nev, szerepkor: user.szerepkor }
+        } 
+        next(); // haladhat tovább a végpontban
+    } catch (error) {
+        return res.status(410).json({ message: "Nem érvényes token" })
+    }
 }
+
 
 function isAdmin(req, res, next) {
     if (req.user.szerepkor !== 1) {
@@ -128,6 +142,7 @@ app.post('/belepes', async (req, res) => {
         }
 
         const user = rows[0];
+        
         const ok = await bcrypt.compare(jelszo, user.jelszo);
 
         if (!ok) {
@@ -144,9 +159,9 @@ app.post('/belepes', async (req, res) => {
             JWT_SECRET,
             { expiresIn: JWT_EXPIRES_IN }
         );
-
+        
         res.cookie(COOKIE_NAME, token, COOKIE_OPTS);
-
+        
         return res.status(200).json({
             message: 'Sikeres belépés',
             user: {
@@ -165,21 +180,15 @@ app.post('/belepes', async (req, res) => {
 
 // KIJELENTKEZÉS
 app.post('/kijelentkezes', (req, res) => {
-    res.clearCookie(COOKIE_NAME, {
-        httpOnly: true,
-        secure: false,
-        sameSite: 'lax',
-        path: '/'
-    });
-
-    return res.status(200).json({ message: 'Sikeres kijelentkezés' });
+    res.clearCookie(COOKIE_NAME, { path: '/' });
+    res.status(200).json({ message: "Sikeres kijelentkezés" })
 });
 
 // ADATAIM
-app.get('/adataim', async (req, res) => {
-    console.log('ADATAIM ELÉRVE');
-    return res.status(200).json({ message: 'mukodik' });
-});
+app.get('/adataim', auth, async (req, res) => {
+    const user = req.user
+    res.status(200).json(user)
+})
 
 // KUTYÁK LEKÉRÉSE
 app.get('/kutyak', auth, async (req, res) => {
