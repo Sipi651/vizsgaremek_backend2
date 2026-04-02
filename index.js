@@ -272,48 +272,6 @@ app.post('/kutyak', auth, upload.single('kep'), async (req, res) => {
     }
 });
 
-// KUTYA KÉP CSERÉJE
-app.put('/kutyak/:id/kep', auth, upload.single('kep'), async (req, res) => {
-    const { id } = req.params;
-    const ujKep = req.file ? req.file.filename : null;
-
-    if (!ujKep) {
-        return res.status(400).json({ message: 'Nincs feltöltött kép' });
-    }
-
-    try {
-        const [rows] = await db.query(
-            'SELECT * FROM kutyak WHERE id = ? AND felhasznalo_id = ?',
-            [id, req.user.id]
-        );
-
-        if (!rows.length) {
-            return res.status(404).json({ message: 'A kutya nem található' });
-        }
-
-        const regiKep = rows[0].kep;
-
-        await db.query(
-            'UPDATE kutyak SET kep = ? WHERE id = ? AND felhasznalo_id = ?',
-            [ujKep, id, req.user.id]
-        );
-
-        if (regiKep) {
-            const filePath = path.join(__dirname, 'uploads', regiKep);
-            try {
-                await fs.unlink(filePath);
-            } catch (e) {
-                console.log('Régi kép törlése nem sikerült:', e.message);
-            }
-        }
-
-        return res.status(200).json({ message: 'Kép sikeresen frissítve' });
-    } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
-    }
-});
-
 // KUTYA TÖRLÉSE
 app.delete('/kutyak/:id', auth, async (req, res) => {
     const { id } = req.params;
