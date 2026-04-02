@@ -194,21 +194,23 @@ app.get('/adataim', auth, async (req, res) => {
 app.get('/kutyak', auth, async (req, res) => {
     try {
         const [rows] = await db.query(`
-            SELECT 
-                k.id,
-                k.nev,
-                k.kutyafajta_id,
-                k.nem,
-                k.leiras,
-                k.letrehozva,
-                k.kep,
-                k.felhasznalo_id,
-                f.megnevezes AS fajta_nev,
-                u.teljes_nev AS gazda_nev
-            FROM kutyak k
-            LEFT JOIN kutyafajtak f ON k.kutyafajta_id = f.id
-            LEFT JOIN felhasznalok u ON k.felhasznalo_id = u.id
-            ORDER BY k.id DESC
+            SELECT
+                kutyak.id,
+                kutyak.nev,
+                kutyak.kutyafajta_id,
+                kutyak.nem,
+                kutyak.leiras,
+                kutyak.letrehozva,
+                kutyak.kep,
+                kutyak.felhasznalo_id,
+                kutyafajtak.megnevezes AS kutyafajta_megnevezes,
+                felhasznalok.teljes_nev AS gazda_teljes_nev
+            FROM kutyak
+            LEFT JOIN kutyafajtak
+                ON kutyak.kutyafajta_id = kutyafajtak.id
+            LEFT JOIN felhasznalok
+                ON kutyak.felhasznalo_id = felhasznalok.id
+            ORDER BY kutyak.id DESC
         `);
 
         return res.status(200).json(rows);
