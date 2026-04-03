@@ -344,27 +344,6 @@ app.put('/email', auth, async (req, res) => {
     }
 });
 
-// TELJES NÉV MÓDOSÍTÁS
-app.put('/teljes_nev', auth, async (req, res) => {
-    const { ujTeljesNev } = req.body;
-
-    if (!ujTeljesNev) {
-        return res.status(400).json({ message: 'Az új teljes név megadása kötelező' });
-    }
-
-    try {
-        await db.query(
-            'UPDATE felhasznalok SET teljes_nev = ? WHERE id = ?',
-            [ujTeljesNev, req.user.id]
-        );
-
-        return res.status(200).json({ message: 'Sikeres módosítás' });
-    } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
-    }
-});
-
 // JELSZÓ MÓDOSÍTÁS
 app.put('/jelszo', auth, async (req, res) => {
     const { jelenlegiJelszo, ujJelszo } = req.body;
@@ -505,6 +484,63 @@ app.delete('/felhasznalo/:id', auth, isAdmin, async (req, res) => {
     }
 });
 
+app.get('/kutyak/elveszett', auth, async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT 
+                kutyak.id,
+                kutyak.nev,
+                kutyak.kep,
+                kutyak.leiras,
+                kutyak.letrehozva,
+                kutyafajtak.megnevezes AS kutyafajta_megnevezes,
+                felhasznalok.teljes_nev AS gazda_nev,
+                felhasznalok.email AS gazda_email,
+                felhasznalok.telefonszam AS gazda_telefonszam
+            FROM kutyak
+            LEFT JOIN kutyafajtak 
+                ON kutyak.kutyafajta_id = kutyafajtak.id
+            LEFT JOIN felhasznalok 
+                ON kutyak.felhasznalo_id = felhasznalok.id
+            WHERE kutyak.status = 0
+            ORDER BY kutyak.id DESC
+        `);
+
+        return res.status(200).json(rows);
+    } catch (error) {
+        console.log(error);
+        return res.status(500).json({ message: 'Szerverhiba' });
+    }
+});
+
+app.get('/kutyak/talalt', auth, async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT 
+                kutyak.id,
+                kutyak.nev,
+                kutyak.kep,
+                kutyak.leiras,
+                kutyak.letrehozva,
+                kutyafajtak.megnevezes AS kutyafajta_megnevezes,
+                felhasznalok.teljes_nev AS gazda_nev,
+                felhasznalok.email AS gazda_email,
+                felhasznalok.telefonszam AS gazda_telefonszam
+            FROM kutyak
+            LEFT JOIN kutyafajtak 
+                ON kutyak.kutyafajta_id = kutyafajtak.id
+            LEFT JOIN felhasznalok 
+                ON kutyak.felhasznalo_id = felhasznalok.id
+            WHERE kutyak.status = 1
+            ORDER BY kutyak.id DESC
+        `);
+
+        return res.status(200).json(rows);
+    } catch (error) {
+        console.log(error);
+        return res.status(500).json({ message: 'Szerverhiba' });
+    }
+});
 app.listen(PORT, HOST, () => {
     console.log(`API fut: http://${HOST}:${PORT}/`);
 });
