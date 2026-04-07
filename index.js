@@ -1,152 +1,214 @@
-const express = require('express');
-const cors = require('cors');
-const cookieParser = require('cookie-parser');
-const mysql = require('mysql2/promise');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const emailValidator = require('node-email-verifier');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs/promises');
-const { log } = require('console');
+const express = require("express");
+const cors = require("cors");
+const cookieParser = require("cookie-parser");
+const mysql = require("mysql2/promise");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs/promises");
 
-// config
-const PORT = 3000;
-const HOST = 'localhost';
-const JWT_SECRET = 'nagyon_titkos_egyedi_jelszo';
-const JWT_EXPIRES_IN = '7d';
-const COOKIE_NAME = 'auth_token';
-
-const COOKIE_OPTS = {
-    httpOnly: true,
-    secure: false,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 nap
-}
-
-// adatbázis
-const db = mysql.createPool({
-    host: 'localhost',
-    port: '3306',
-    user: 'root',
-    password: '',
-    database: 'kutyadb'
-});
 
 const app = express();
+const PORT = 3000;
+const HOST = "localhost";
+
+const JWT_SECRET = "gazdivar_nagyon_titkos_kulcs";
+const COOKIE_NAME = "auth_token";
+
+const db = mysql.createPool({
+    host: "127.0.0.1",
+    port: 3306,
+    user: "root",
+    password: "",
+    database: "kutyadb",
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+});
 
 app.use(express.json());
 app.use(cookieParser());
 app.use(cors({
-    origin: 'http://localhost:5173',
+    origin: "http://localhost:5173",
     credentials: true
 }));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// middleware
-async function auth(req, res, next) {
-    const token = req.cookies[COOKIE_NAME];
-    if (!token) { // le van járva a cookie --> nem érvényes
-        return res.status(409).json({ message: "Nincs bejelentkezés" })
-    }
-    try {
-        // tokenből kinyerni a felhasználói adatokat!
-        const user = jwt.verify(token, JWT_SECRET)
-        const sql = 'SELECT * FROM felhasznalok WHERE id = ?'
-        const [rows] = await db.query(sql, [user.id]);
-        if (rows.length) {
-            const user = rows[0];
-            req.user= { id: user.id, email: user.email, teljes_nev: user.teljes_nev, szerepkor: user.szerepkor }
-        } 
-        next(); // haladhat tovább a végpontban
-    } catch (error) {
-        return res.status(410).json({ message: "Nem érvényes token" })
-    }
-}
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-
-function isAdmin(req, res, next) {
-    if (req.user.szerepkor !== 1) {
-        return res.status(403).json({ message: 'Nincs megfelelő jogosultság' });
-    }
-    next();
-}
-
-// multer
 const storage = multer.diskStorage({
-    destination: './uploads/',
+    destination: async (req, file, cb) => {
+        const uploadPath = path.join(__dirname, "uploads");
+
+        try {
+            await fs.mkdir(uploadPath, { recursive: true });
+            cb(null, uploadPath);
+        } catch (error) {
+            cb(error, uploadPath);
+        }
+    },
     filename: (req, file, cb) => {
-        cb(null, Date.now() + path.extname(file.originalname));
+        const ext = path.extname(file.originalname);
+        const safeName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+        cb(null, safeName);
     }
 });
 
 const upload = multer({ storage });
 
-// REGISZTRÁCIÓ
-app.post('/regisztracio', async (req, res) => {
-    const { email, teljes_nev, jelszo, telefonszam } = req.body;
+function createToken(user) {
+    return jwt.sign(
+        {
+            id: user.id,
+            email: user.email,
+            teljes_nev: user.teljes_nev,
+            szerepkor: user.szerepkor
+        },
+        JWT_SECRET,
+        { expiresIn: "7d" }
+    );
+}
 
-    if (!email || !teljes_nev || !jelszo || !telefonszam) {
-        return res.status(400).json({ message: 'Hiányzó bemeneti adatok' });
+function sendAuthCookie(res, token) {
+    res.cookie(COOKIE_NAME, token, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: false,
+        maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+}
+
+async function auth(req, res, next) {
+    const token = req.cookies.auth_token;
+
+    if (!token) {
+        return res.status(401).json({ message: "Nincs bejelentkezve" });
     }
 
     try {
-        const isValid = await emailValidator(email);
-        if (!isValid) {
-            return res.status(400).json({ message: 'Nem valós email cím' });
+        const decoded = jwt.verify(token, JWT_SECRET);
+
+        const [rows] = await db.query(
+            "SELECT id, email, teljes_nev, telefonszam, szerepkor FROM felhasznalok WHERE id = ?",
+            [decoded.id]
+        );
+
+        if (!rows.length) {
+            return res.status(401).json({ message: "Érvénytelen munkamenet" });
         }
 
-        const [emailExists] = await db.query(
-            'SELECT id FROM felhasznalok WHERE email = ?',
+        req.user = rows[0];
+        next();
+    } catch (error) {
+        console.log("AUTH HIBA:", error);
+        return res.status(401).json({ message: "Érvénytelen token" });
+    }
+}
+function adminOnly(req, res, next) {
+    if (Number(req.user.szerepkor) !== 1) {
+        return res.status(403).json({ message: "Nincs jogosultságod ehhez" });
+    }
+    next();
+}
+
+function mapNemToDb(nem) {
+    if (String(nem) === "0") return "kan";
+    if (String(nem) === "1") return "szuka";
+    if (nem === "kan" || nem === "szuka") return nem;
+    return null;
+}
+
+function formatDatetimeLocalToMysql(ido) {
+    if (!ido) return null;
+    if (typeof ido !== "string") return null;
+
+    
+    if (ido.includes("T")) {
+        return `${ido.replace("T", " ")}:00`;
+    }
+
+    return ido;
+}
+
+
+
+// Alap teszt
+app.get("/", (req, res) => {
+    res.json({ message: "GazdiVár backend működik" });
+});
+
+// Regisztráció
+app.post("/regisztracio", async (req, res) => {
+    const { email, teljes_nev, jelszo, telefonszam } = req.body;
+
+    if (!email || !teljes_nev || !jelszo || !telefonszam) {
+        return res.status(400).json({ message: "Hiányzó bemeneti adatok" });
+    }
+
+    try {
+        const [exists] = await db.query(
+            "SELECT id FROM felhasznalok WHERE email = ?",
             [email]
         );
 
-        if (emailExists.length) {
-            return res.status(409).json({ message: 'Az email cím már foglalt' });
+        if (exists.length) {
+            return res.status(400).json({ message: "Ez az email már foglalt" });
         }
 
         const hash = await bcrypt.hash(jelszo, 10);
 
         const [result] = await db.query(
-            'INSERT INTO felhasznalok (email, teljes_nev, jelszo, telefonszam, szerepkor) VALUES (?, ?, ?, ?, ?)',
-            [email, teljes_nev, hash, telefonszam, 0]
+            `INSERT INTO felhasznalok (email, teljes_nev, jelszo, telefonszam, szerepkor)
+             VALUES (?, ?, ?, ?, 0)`,
+            [email, teljes_nev, hash, telefonszam]
         );
 
         return res.status(201).json({
-            message: 'Sikeres regisztráció',
+            message: "Sikeres regisztráció",
             id: result.insertId
         });
     } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
+        console.log("REGISZTRÁCIÓ HIBA:", error);
+        return res.status(500).json({ message: "Szerverhiba" });
     }
 });
 
-// BELÉPÉS
-app.post('/belepes', async (req, res) => {
+// Belépés
+app.post("/belepes", async (req, res) => {
     const { teljes_nevVagyEmail, jelszo } = req.body;
 
+    console.log("BELEPES BODY:", req.body);
+
     if (!teljes_nevVagyEmail || !jelszo) {
-        return res.status(400).json({ message: 'Hiányos adatok' });
+        return res.status(400).json({ message: "Hiányzó bemeneti adatok" });
     }
 
     try {
         const [rows] = await db.query(
-            `SELECT * FROM felhasznalok WHERE email = ? OR teljes_nev = ?`,
+            "SELECT * FROM felhasznalok WHERE email = ? OR teljes_nev = ? LIMIT 1",
             [teljes_nevVagyEmail, teljes_nevVagyEmail]
         );
 
+        console.log("LEKERT USER:", rows);
+
         if (!rows.length) {
-            return res.status(401).json({ message: 'Hibás belépési adatok' });
+            return res.status(401).json({ message: "Hibás email/felhasználónév vagy jelszó" });
         }
 
         const user = rows[0];
-        
-        const ok = await bcrypt.compare(jelszo, user.jelszo);
 
-        if (!ok) {
-            return res.status(401).json({ message: 'Hibás belépési adatok' });
+        console.log("USER JELSZO:", user.jelszo);
+        console.log("JWT_SECRET:", JWT_SECRET);
+
+        if (!user.jelszo) {
+            return res.status(500).json({ message: "A felhasználó jelszava hiányzik az adatbázisból" });
+        }
+
+        const joJelszo = await bcrypt.compare(jelszo, user.jelszo);
+        console.log("JO JELSZO?:", joJelszo);
+
+        if (!joJelszo) {
+            return res.status(401).json({ message: "Hibás email/felhasználónév vagy jelszó" });
         }
 
         const token = jwt.sign(
@@ -157,390 +219,445 @@ app.post('/belepes', async (req, res) => {
                 szerepkor: user.szerepkor
             },
             JWT_SECRET,
-            { expiresIn: JWT_EXPIRES_IN }
+            { expiresIn: "7d" }
         );
-        
-        res.cookie(COOKIE_NAME, token, COOKIE_OPTS);
-        
+
+        res.cookie("auth_token", token, {
+            httpOnly: true,
+            sameSite: "lax",
+            secure: false,
+            maxAge: 7 * 24 * 60 * 60 * 1000
+        });
+
         return res.status(200).json({
-            message: 'Sikeres belépés',
+            message: "Sikeres bejelentkezés",
             user: {
                 id: user.id,
                 email: user.email,
                 teljes_nev: user.teljes_nev,
-                szerepkor: user.szerepkor,
-                telefonszam: user.telefonszam
+                telefonszam: user.telefonszam,
+                szerepkor: user.szerepkor
             }
         });
-    } catch (err) {
-        console.error(err);
-        return res.status(500).json({ message: 'Szerverhiba' });
-    }
-});
-
-// KIJELENTKEZÉS
-app.post('/kijelentkezes', (req, res) => {
-    res.clearCookie(COOKIE_NAME, { path: '/' });
-    res.status(200).json({ message: "Sikeres kijelentkezés" })
-});
-
-// ADATAIM
-app.get('/adataim', auth, async (req, res) => {
-    const user = req.user
-    res.status(200).json(user)
-})
-
-// KUTYÁK LEKÉRÉSE
-app.get('/kutyak', auth, async (req, res) => {
-    try {
-        const [rows] = await db.query(`
-            SELECT
-                kutyak.id,
-                kutyak.nev,
-                kutyak.kutyafajta_id,
-                kutyak.nem,
-                kutyak.leiras,
-                kutyak.letrehozva,
-                kutyak.kep,
-                kutyak.felhasznalo_id,
-                kutyafajtak.megnevezes AS kutyafajta_megnevezes,
-                felhasznalok.teljes_nev AS gazda_teljes_nev
-            FROM kutyak
-            LEFT JOIN kutyafajtak
-                ON kutyak.kutyafajta_id = kutyafajtak.id
-            LEFT JOIN felhasznalok
-                ON kutyak.felhasznalo_id = felhasznalok.id
-            ORDER BY kutyak.id DESC
-        `);
-
-        return res.status(200).json(rows);
     } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
+        console.log("BELÉPÉS HIBA TELJESEN:", error);
+        console.log("HIBA MESSAGE:", error.message);
+        console.log("HIBA CODE:", error.code);
+        return res.status(500).json({ message: "Szerverhiba" });
     }
 });
 
-// SAJÁT KUTYÁIM
-app.get('/en-kutyaim', auth, async (req, res) => {
+// Kijelentkezés
+app.post("/kijelentkezes", (req, res) => {
+    res.clearCookie("auth_token");
+    return res.status(200).json({ message: "Sikeres kijelentkezés" });
+});
+
+// Adataim
+app.get("/adataim", auth, async (req, res) => {
+    return res.json(req.user);
+});
+
+// Kutyafajták
+app.get("/kutyafajtak", auth, async (req, res) => {
     try {
         const [rows] = await db.query(
-            'SELECT * FROM kutyak WHERE felhasznalo_id = ? ORDER BY id DESC',
-            [req.user.id]
+            "SELECT id, megnevezes FROM kutyafajtak ORDER BY megnevezes ASC"
         );
 
-        return res.status(200).json(rows);
+        return res.json(rows);
     } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
+        console.log("KUTYAFAJTÁK HIBA:", error);
+        return res.status(500).json({ message: "Szerverhiba" });
     }
 });
 
-// KUTYAFAJTÁK
-app.get('/kutyafajtak', auth, async (req, res) => {
-    try {
-        const [rows] = await db.query('SELECT * FROM kutyafajtak ORDER BY megnevezes');
-        return res.status(200).json(rows);
-    } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
-    }
-});
-
-// ÚJ KUTYA LÉTREHOZÁSA KÉPFELTÖLTÉSSEL
-app.post('/kutyak', auth, upload.single('kep'), async (req, res) => {
-    const { nev, kutyafajta_id, nem, leiras } = req.body;
+// Új kutya / új jelentés létrehozása
+app.post("/kutyak", auth, upload.single("kep"), async (req, res) => {
+    const { nev, kutyafajta_id, nem, leiras, tipus, szin, hely, ido } = req.body;
     const kep = req.file ? req.file.filename : null;
 
-    if (!nev || !kutyafajta_id || nem === undefined) {
-        return res.status(400).json({ message: 'Hiányzó bemeneti adatok' });
+    const dbNem = mapNemToDb(nem);
+    const mysqlIdo = formatDatetimeLocalToMysql(ido);
+
+    if (!nev || !kutyafajta_id || dbNem === null || !tipus || !szin || !hely || !ido || !kep) {
+        return res.status(400).json({ message: "Hiányzó bemeneti adatok" });
     }
+
+    if (tipus !== "elveszett" && tipus !== "talalt") {
+        return res.status(400).json({ message: "Érvénytelen típus" });
+    }
+
+    const dbTipus = tipus === "talalt" ? "talalt" : "elveszett";
 
     try {
         const [result] = await db.query(
-            `INSERT INTO kutyak (nev, kutyafajta_id, nem, leiras, letrehozva, kep, felhasznalo_id)
-             VALUES (?, ?, ?, ?, NOW(), ?, ?)`,
-            [nev, kutyafajta_id, nem, leiras || null, kep, req.user.id]
+            `INSERT INTO jelentesek
+            (tipus, felhasznalo_id, nev, kutyafajta_id, nem, szin, utolso_latas_hely, utolso_latas_ido, leiras, kep, letrehozva)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            [
+                dbTipus,
+                req.user.id,
+                nev,
+                kutyafajta_id,
+                dbNem,
+                szin,
+                hely,
+                mysqlIdo,
+                leiras || null,
+                kep
+            ]
         );
 
         return res.status(201).json({
-            message: 'Sikeres kutya felvitel',
+            message: "Sikeres kutya felvitel",
             id: result.insertId
         });
     } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
+        console.log("KUTYA FELTÖLTÉS HIBA:", error);
+        return res.status(500).json({ message: "Szerverhiba" });
     }
 });
 
-// KUTYA TÖRLÉSE
-app.delete('/kutyak/:id', auth, async (req, res) => {
+// Összes kutya
+app.get("/kutyak", auth, async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT
+                j.id,
+                j.tipus,
+                j.nev,
+                j.nem,
+                j.szin,
+                j.utolso_latas_hely AS hely,
+                j.utolso_latas_ido AS ido,
+                j.leiras,
+                j.kep,
+                j.letrehozva,
+                j.felhasznalo_id,
+                k.megnevezes AS kutyafajta_megnevezes,
+                f.teljes_nev AS gazda_nev,
+                f.email AS gazda_email,
+                f.telefonszam AS gazda_telefonszam
+            FROM jelentesek j
+            LEFT JOIN kutyafajtak k ON j.kutyafajta_id = k.id
+            LEFT JOIN felhasznalok f ON j.felhasznalo_id = f.id
+            ORDER BY j.id DESC
+        `);
+
+        return res.json(rows);
+    } catch (error) {
+        console.log("ÖSSZES KUTYA HIBA:", error);
+        return res.status(500).json({ message: "Szerverhiba" });
+    }
+});
+
+// Elveszett kutyák
+app.get("/kutyak/elveszett", auth, async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT
+                j.id,
+                j.nev,
+                j.nem,
+                j.szin,
+                j.utolso_latas_hely AS eltunes_helye,
+                j.utolso_latas_ido AS eltunes_ideje,
+                j.leiras,
+                j.kep,
+                j.letrehozva,
+                k.megnevezes AS kutyafajta_megnevezes,
+                f.teljes_nev AS gazda_nev,
+                f.email AS gazda_email,
+                f.telefonszam AS gazda_telefonszam
+            FROM jelentesek j
+            LEFT JOIN kutyafajtak k ON j.kutyafajta_id = k.id
+            LEFT JOIN felhasznalok f ON j.felhasznalo_id = f.id
+            WHERE j.tipus = 'elveszett'
+            ORDER BY j.id DESC
+        `);
+
+        return res.json(rows);
+    } catch (error) {
+        console.log("ELVESZETT KUTYÁK HIBA:", error);
+        return res.status(500).json({ message: "Szerverhiba" });
+    }
+});
+
+// Talált kutyák
+app.get("/kutyak/talalt", auth, async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT
+                j.id,
+                j.nev,
+                j.nem,
+                j.szin,
+                j.utolso_latas_hely AS megtalalas_helye,
+                j.utolso_latas_ido AS megtalalas_ideje,
+                j.leiras,
+                j.kep,
+                j.letrehozva,
+                k.megnevezes AS kutyafajta_megnevezes,
+                f.teljes_nev AS gazda_nev,
+                f.email AS gazda_email,
+                f.telefonszam AS gazda_telefonszam
+            FROM jelentesek j
+            LEFT JOIN kutyafajtak k ON j.kutyafajta_id = k.id
+            LEFT JOIN felhasznalok f ON j.felhasznalo_id = f.id
+            WHERE j.tipus = 'talalt'
+            ORDER BY j.id DESC
+        `);
+
+        return res.json(rows);
+    } catch (error) {
+        console.log("TALÁLT KUTYÁK HIBA:", error);
+        return res.status(500).json({ message: "Szerverhiba" });
+    }
+});
+
+// Saját kutyáim
+app.get("/en-kutyaim", auth, async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT
+                j.id,
+                j.tipus,
+                j.nev,
+                j.nem,
+                j.szin,
+                j.utolso_latas_hely AS hely,
+                j.utolso_latas_ido AS ido,
+                j.leiras,
+                j.kep,
+                j.letrehozva,
+                k.megnevezes AS kutyafajta_megnevezes
+            FROM jelentesek j
+            LEFT JOIN kutyafajtak k ON j.kutyafajta_id = k.id
+            WHERE j.felhasznalo_id = ?
+            ORDER BY j.id DESC
+        `, [req.user.id]);
+
+        return res.json(rows);
+    } catch (error) {
+        console.log("SAJÁT KUTYÁK HIBA:", error);
+        return res.status(500).json({ message: "Szerverhiba" });
+    }
+});
+
+// Kutya törlése
+app.delete("/kutyak/:id", auth, async (req, res) => {
     const { id } = req.params;
 
     try {
         const [rows] = await db.query(
-            'SELECT * FROM kutyak WHERE id = ? AND felhasznalo_id = ?',
+            "SELECT * FROM jelentesek WHERE id = ? AND felhasznalo_id = ?",
             [id, req.user.id]
         );
 
         if (!rows.length) {
-            return res.status(404).json({ message: 'A kutya nem található' });
+            return res.status(404).json({ message: "Nem található a bejegyzés" });
         }
 
         const kutya = rows[0];
 
         await db.query(
-            'DELETE FROM kutyak WHERE id = ? AND felhasznalo_id = ?',
+            "DELETE FROM jelentesek WHERE id = ? AND felhasznalo_id = ?",
             [id, req.user.id]
         );
 
         if (kutya.kep) {
-            const filePath = path.join(__dirname, 'uploads', kutya.kep);
+            const filePath = path.join(__dirname, "uploads", kutya.kep);
             try {
                 await fs.unlink(filePath);
-            } catch (e) {
-                console.log('Kép törlése nem sikerült:', e.message);
+            } catch (error) {
+                console.log("KÉP TÖRLÉS HIBA:", error.message);
             }
         }
 
-        return res.status(200).json({ message: 'Kutya sikeresen törölve' });
+        return res.json({ message: "Sikeres törlés" });
     } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
+        console.log("TÖRLÉS HIBA:", error);
+        return res.status(500).json({ message: "Szerverhiba" });
     }
 });
 
-// EMAIL MÓDOSÍTÁS
-app.put('/email', auth, async (req, res) => {
+// Email módosítás
+app.put("/email", auth, async (req, res) => {
     const { ujEmail } = req.body;
 
     if (!ujEmail) {
-        return res.status(400).json({ message: 'Az új email megadása kötelező' });
+        return res.status(400).json({ message: "Hiányzó email" });
     }
 
     try {
-        const isValid = await emailValidator(ujEmail);
-        if (!isValid) {
-            return res.status(400).json({ message: 'Az email formátum nem megfelelő' });
-        }
-
-        const [existing] = await db.query(
-            'SELECT id FROM felhasznalok WHERE email = ? AND id <> ?',
+        const [exists] = await db.query(
+            "SELECT id FROM felhasznalok WHERE email = ? AND id != ?",
             [ujEmail, req.user.id]
         );
 
-        if (existing.length) {
-            return res.status(409).json({ message: 'Az email cím már foglalt' });
+        if (exists.length) {
+            return res.status(400).json({ message: "Ez az email már foglalt" });
         }
 
         await db.query(
-            'UPDATE felhasznalok SET email = ? WHERE id = ?',
+            "UPDATE felhasznalok SET email = ? WHERE id = ?",
             [ujEmail, req.user.id]
         );
 
-        return res.status(200).json({ message: 'Sikeres módosítás' });
+        return res.json({ message: "Email sikeresen módosítva" });
     } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
+        console.log("EMAIL MÓDOSÍTÁS HIBA:", error);
+        return res.status(500).json({ message: "Szerverhiba" });
     }
 });
 
-// JELSZÓ MÓDOSÍTÁS
-app.put('/jelszo', auth, async (req, res) => {
+// Jelszó módosítás
+app.put("/jelszo", auth, async (req, res) => {
     const { jelenlegiJelszo, ujJelszo } = req.body;
 
     if (!jelenlegiJelszo || !ujJelszo) {
-        return res.status(400).json({ message: 'Hiányzó adatok' });
+        return res.status(400).json({ message: "Hiányzó bemeneti adatok" });
     }
 
     try {
         const [rows] = await db.query(
-            'SELECT jelszo FROM felhasznalok WHERE id = ?',
+            "SELECT jelszo FROM felhasznalok WHERE id = ?",
             [req.user.id]
         );
 
         if (!rows.length) {
-            return res.status(404).json({ message: 'Felhasználó nem található' });
+            return res.status(404).json({ message: "Felhasználó nem található" });
         }
 
         const ok = await bcrypt.compare(jelenlegiJelszo, rows[0].jelszo);
+
         if (!ok) {
-            return res.status(401).json({ message: 'A jelenlegi jelszó hibás' });
+            return res.status(400).json({ message: "A jelenlegi jelszó hibás" });
         }
 
         const hash = await bcrypt.hash(ujJelszo, 10);
 
         await db.query(
-            'UPDATE felhasznalok SET jelszo = ? WHERE id = ?',
+            "UPDATE felhasznalok SET jelszo = ? WHERE id = ?",
             [hash, req.user.id]
         );
 
-        return res.status(200).json({ message: 'Jelszó sikeresen módosítva' });
+        return res.json({ message: "Jelszó sikeresen módosítva" });
     } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
+        console.log("JELSZÓ MÓDOSÍTÁS HIBA:", error);
+        return res.status(500).json({ message: "Szerverhiba" });
     }
 });
 
-// FIÓK TÖRLÉSE
-app.delete('/fiokom', auth, async (req, res) => {
+// Fiók törlése
+app.delete("/fiokom", auth, async (req, res) => {
     try {
-        const [dogs] = await db.query(
-            'SELECT kep FROM kutyak WHERE felhasznalo_id = ?',
+        const [kutyak] = await db.query(
+            "SELECT kep FROM jelentesek WHERE felhasznalo_id = ?",
             [req.user.id]
         );
 
-        await db.query('DELETE FROM kutyak WHERE felhasznalo_id = ?', [req.user.id]);
-        await db.query('DELETE FROM felhasznalok WHERE id = ?', [req.user.id]);
-
-        for (const kutya of dogs) {
+        for (const kutya of kutyak) {
             if (kutya.kep) {
-                const filePath = path.join(__dirname, 'uploads', kutya.kep);
+                const filePath = path.join(__dirname, "uploads", kutya.kep);
                 try {
                     await fs.unlink(filePath);
-                } catch (e) {
-                    console.log('Kép törlése nem sikerült:', e.message);
+                } catch (error) {
+                    console.log("KÉP TÖRLÉS HIBA:", error.message);
                 }
             }
         }
 
-        res.clearCookie(COOKIE_NAME, {
-            httpOnly: true,
-            secure: false,
-            sameSite: 'lax',
-            path: '/'
-        });
+        await db.query("DELETE FROM jelentesek WHERE felhasznalo_id = ?", [req.user.id]);
+        await db.query("DELETE FROM felhasznalok WHERE id = ?", [req.user.id]);
 
-        return res.status(200).json({ message: 'A fiók sikeresen törölve lett' });
+        res.clearCookie(COOKIE_NAME);
+        return res.json({ message: "Fiók sikeresen törölve" });
     } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
+        console.log("FIÓK TÖRLÉS HIBA:", error);
+        return res.status(500).json({ message: "Szerverhiba" });
     }
 });
 
-// ADMIN FELHASZNÁLÓK LISTÁZÁSA
-app.get('/felhasznalok', auth, isAdmin, async (req, res) => {
+// Admin - felhasználók lekérése
+app.get("/felhasznalok", auth, adminOnly, async (req, res) => {
     try {
-        const [rows] = await db.query(
-            'SELECT id, email, teljes_nev, telefonszam, szerepkor FROM felhasznalok ORDER BY id DESC'
+        const [rows] = await db.query(`
+            SELECT id, email, teljes_nev, telefonszam, szerepkor
+            FROM felhasznalok
+            ORDER BY id DESC
+        `);
+
+        return res.json(rows);
+    } catch (error) {
+        console.log("FELHASZNÁLÓK HIBA:", error);
+        return res.status(500).json({ message: "Szerverhiba" });
+    }
+});
+
+// Admin - felhasználó törlése
+app.delete("/felhasznalo/:id", auth, adminOnly, async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const [users] = await db.query(
+            "SELECT id FROM felhasznalok WHERE id = ?",
+            [id]
         );
 
-        return res.status(200).json(rows);
+        if (!users.length) {
+            return res.status(404).json({ message: "Felhasználó nem található" });
+        }
+
+        const [kutyak] = await db.query(
+            "SELECT kep FROM jelentesek WHERE felhasznalo_id = ?",
+            [id]
+        );
+
+        for (const kutya of kutyak) {
+            if (kutya.kep) {
+                const filePath = path.join(__dirname, "uploads", kutya.kep);
+                try {
+                    await fs.unlink(filePath);
+                } catch (error) {
+                    console.log("KÉP TÖRLÉS HIBA:", error.message);
+                }
+            }
+        }
+
+        await db.query("DELETE FROM jelentesek WHERE felhasznalo_id = ?", [id]);
+        await db.query("DELETE FROM felhasznalok WHERE id = ?", [id]);
+
+        return res.json({ message: "Felhasználó sikeresen törölve" });
     } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
+        console.log("ADMIN TÖRLÉS HIBA:", error);
+        return res.status(500).json({ message: "Szerverhiba" });
     }
 });
 
-// ADMIN SZEREPKÖR MÓDOSÍTÁS
-app.put('/szerepkor/:felhasznalo_id', auth, isAdmin, async (req, res) => {
-    const { felhasznalo_id } = req.params;
+// Admin - szerepkör módosítás
+app.put("/szerepkor/:id", auth, adminOnly, async (req, res) => {
+    const { id } = req.params;
     const { szerepkor } = req.body;
 
     if (szerepkor === undefined) {
-        return res.status(400).json({ message: 'A szerepkör megadása kötelező' });
+        return res.status(400).json({ message: "Hiányzó szerepkör" });
     }
 
     try {
         await db.query(
-            'UPDATE felhasznalok SET szerepkor = ? WHERE id = ?',
-            [szerepkor, felhasznalo_id]
+            "UPDATE felhasznalok SET szerepkor = ? WHERE id = ?",
+            [Number(szerepkor), id]
         );
 
-        return res.status(200).json({ message: 'Sikeres módosítás' });
+        return res.json({ message: "Szerepkör sikeresen módosítva" });
     } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
+        console.log("SZEREPKÖR HIBA:", error);
+        return res.status(500).json({ message: "Szerverhiba" });
     }
 });
 
-// ADMIN FELHASZNÁLÓ TÖRLÉS
-app.delete('/felhasznalo/:id', auth, isAdmin, async (req, res) => {
-    const { id } = req.params;
-
-    try {
-        const [dogs] = await db.query(
-            'SELECT kep FROM kutyak WHERE felhasznalo_id = ?',
-            [id]
-        );
-
-        await db.query('DELETE FROM kutyak WHERE felhasznalo_id = ?', [id]);
-        await db.query('DELETE FROM felhasznalok WHERE id = ?', [id]);
-
-        for (const kutya of dogs) {
-            if (kutya.kep) {
-                const filePath = path.join(__dirname, 'uploads', kutya.kep);
-                try {
-                    await fs.unlink(filePath);
-                } catch (e) {
-                    console.log('Kép törlése nem sikerült:', e.message);
-                }
-            }
-        }
-
-        return res.status(200).json({ message: 'Sikeres törlés' });
-    } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
-    }
-});
-
-app.get('/kutyak/elveszett', auth, async (req, res) => {
-    try {
-        const [rows] = await db.query(`
-            SELECT 
-                kutyak.id,
-                kutyak.nev,
-                kutyak.kep,
-                kutyak.leiras,
-                kutyak.letrehozva,
-                kutyafajtak.megnevezes AS kutyafajta_megnevezes,
-                felhasznalok.teljes_nev AS gazda_nev,
-                felhasznalok.email AS gazda_email,
-                felhasznalok.telefonszam AS gazda_telefonszam
-            FROM kutyak
-            LEFT JOIN kutyafajtak 
-                ON kutyak.kutyafajta_id = kutyafajtak.id
-            LEFT JOIN felhasznalok 
-                ON kutyak.felhasznalo_id = felhasznalok.id
-            WHERE kutyak.status = 0
-            ORDER BY kutyak.id DESC
-        `);
-
-        return res.status(200).json(rows);
-    } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
-    }
-});
-
-app.get('/kutyak/talalt', auth, async (req, res) => {
-    try {
-        const [rows] = await db.query(`
-            SELECT 
-                kutyak.id,
-                kutyak.nev,
-                kutyak.kep,
-                kutyak.leiras,
-                kutyak.letrehozva,
-                kutyafajtak.megnevezes AS kutyafajta_megnevezes,
-                felhasznalok.teljes_nev AS gazda_nev,
-                felhasznalok.email AS gazda_email,
-                felhasznalok.telefonszam AS gazda_telefonszam
-            FROM kutyak
-            LEFT JOIN kutyafajtak 
-                ON kutyak.kutyafajta_id = kutyafajtak.id
-            LEFT JOIN felhasznalok 
-                ON kutyak.felhasznalo_id = felhasznalok.id
-            WHERE kutyak.status = 1
-            ORDER BY kutyak.id DESC
-        `);
-
-        return res.status(200).json(rows);
-    } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Szerverhiba' });
-    }
-});
 app.listen(PORT, HOST, () => {
-    console.log(`API fut: http://${HOST}:${PORT}/`);
+    console.log(`Szerver fut: http://${HOST}:${PORT}`);
 });
