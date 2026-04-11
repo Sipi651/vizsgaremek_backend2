@@ -512,6 +512,34 @@ app.put("/email", auth, async (req, res) => {
     }
 });
 
+app.post("/telefon-modositas", auth, async (req, res) => {
+    const { telefon } = req.body;
+
+    if (!telefon) {
+        return res.status(400).json({ message: "Hiányzó telefonszám" });
+    }
+
+    try {
+        const token = req.cookies.auth_token;
+
+        if (!token) {
+            return res.status(401).json({ message: "Nincs bejelentkezve" });
+        }
+
+        const decoded = jwt.verify(token, JWT_SECRET);
+
+        await db.query(
+            "UPDATE felhasznalok SET telefonszam = ? WHERE id = ?",
+            [telefon, decoded.id]
+        );
+
+        return res.status(200).json({ message: "Telefonszám sikeresen módosítva" });
+    } catch (error) {
+        console.log("TELEFONSZÁM MÓDOSÍTÁS HIBA:", error);
+        return res.status(500).json({ message: "Szerverhiba" });
+    }
+});
+
 // Jelszó módosítás
 app.put("/jelszo", auth, async (req, res) => {
     const { jelenlegiJelszo, ujJelszo } = req.body;
