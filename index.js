@@ -512,6 +512,7 @@ app.put("/email", auth, async (req, res) => {
     }
 });
 
+//   Telefonszám modositása
 app.post("/telefon-modositas", auth, async (req, res) => {
     const { telefon } = req.body;
 
