@@ -9,7 +9,7 @@ A rendszer célja, hogy a felhasználók gyorsan és egyszerűen feltölthessék
 
 ## 🙋‍♂️Készítette
 
-- Sipos Árpád Dávid
+- Sipos Árpád Dávid és Szabó Bálint
 
 ---
 
