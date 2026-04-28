@@ -57,6 +57,9 @@ A backend a `kutyadb` adatbázist használja.
 - kep  
 - letrehozva  
 
+<img width="879" height="444" alt="image" src="https://github.com/user-attachments/assets/71b1292c-1928-4f59-8687-f6b147079f2e" />
+
+
 ---
 
 ## 🎰Backend
