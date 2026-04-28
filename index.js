@@ -4,7 +4,7 @@ const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const mysql = require("mysql2/promise");
-const bcrypt = require("bcrypt");
+const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const path = require("path");
@@ -19,7 +19,7 @@ const JWT_EXPIRES_IN= process.env.JWT_EXPIRES_IN;
 const COOKIE_NAME = "auth_token";
 
 const db = mysql.createPool({
-    host: process.env.HOST,
+    host: process.env.DB_HOST,
     port: process.env.DB_PORT,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
@@ -32,7 +32,7 @@ const db = mysql.createPool({
 app.use(express.json());
 app.use(cookieParser());
 app.use(cors({
-    origin: "*",
+    origin: ["http://localhost:5173","https://gazdivar.netlify.app"],
     credentials: true
 }));
 
