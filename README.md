@@ -113,9 +113,10 @@ Backend/
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
@@ -125,6 +126,7 @@ Backend/
     "nodemon": "^3.1.14"
   }
 }
+
 
 ```
 
