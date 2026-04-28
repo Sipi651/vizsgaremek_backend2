@@ -9,7 +9,8 @@ A rendszer célja, hogy a felhasználók gyorsan és egyszerűen feltölthessék
 
 ## 🙋‍♂️Készítette
 
-- Sipos Árpád Dávid és Szabó Bálint
+- [Sipos Árpád Dávid](https://github.com/Sipi651)
+- [Szabó Bálint](https://github.com/szabobalint17)
 
 ---
 
